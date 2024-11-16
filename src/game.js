@@ -19,7 +19,8 @@ class MainScene extends Phaser.Scene {
         // New steering constants for gradual steering
         this.STEERING_ACCELERATION = 0.005; // How quickly steering builds up
         this.STEERING_DECELERATION = 0.60; // How quickly steering returns to center
-        this.MAX_STEERING = 0.2;
+        this.BASE_MAX_STEERING = 0.45;    // Maximum steering at lowest speed
+        this.MIN_MAX_STEERING = 0.16;     // Maximum steering at highest speed
         this.CURRENT_STEERING = 0; // Track current steering amount
         this.STEERING_SPEED = 0; // Track steering velocity
 
@@ -35,6 +36,7 @@ class MainScene extends Phaser.Scene {
 
     preload() {
         this.load.image('taxi', 'assets/taxi.png');
+        this.load.image('steering-wheel', 'assets/steering-wheel.png');
         
         // Load tree variants
         this.load.image('tree1', 'assets/tree1.png');
@@ -153,6 +155,15 @@ class MainScene extends Phaser.Scene {
         this.speedBar.setDepth(1);
         this.speedBar.setDepth(0);
 
+        // Add steering wheel indicator
+        this.steeringWheel = this.add.image(
+            this.GAME_WIDTH - 70,
+            this.GAME_HEIGHT - 70,
+            'steering-wheel'
+        );
+        this.steeringWheel.setScale(0.15); // Adjust scale as needed
+        this.UILayer.add(this.steeringWheel);
+
         // Enable physics on the player
         this.physics.add.existing(this.player);
         this.player.body.setCollideWorldBounds(true);
@@ -255,6 +266,9 @@ class MainScene extends Phaser.Scene {
         // Clamp speed between MIN_SPEED and MAX_SPEED
         this.carSpeed = Phaser.Math.Clamp(this.carSpeed, this.MIN_SPEED, this.MAX_SPEED);
 
+        // Calculate current maximum steering angle based on speed
+        const currentMaxSteering = this.calculateMaxSteering();
+        
         // Handle steering input with auto-straigtening
         if (this.cursors.left.isDown) {
             this.STEERING_SPEED -= this.STEERING_ACCELERATION * Math.abs(this.carSpeed / this.MAX_SPEED);
@@ -282,19 +296,19 @@ class MainScene extends Phaser.Scene {
              this.STEERING_SPEED *= this.STEERING_DECELERATION;
         }
         
-        // Clamp steering speed
+        // Clamp steering speed with dynamic maximum
         this.STEERING_SPEED = Phaser.Math.Clamp(
             this.STEERING_SPEED,
-            -this.MAX_STEERING,
-            this.MAX_STEERING
+            -currentMaxSteering,
+            currentMaxSteering
         );
         
-        // Update current steering smoothly
+        // Update current steering with dynamic maximum
         this.CURRENT_STEERING += this.STEERING_SPEED;
         this.CURRENT_STEERING = Phaser.Math.Clamp(
             this.CURRENT_STEERING,
-            -this.MAX_STEERING,
-            this.MAX_STEERING
+            -currentMaxSteering,
+            currentMaxSteering
         );
 
         // Apply steering effects only when moving
@@ -319,8 +333,21 @@ class MainScene extends Phaser.Scene {
             }
         }
 
+        const wheelRotation = this.CURRENT_STEERING * 10;
+        this.steeringWheel.setRotation(wheelRotation);
+
         this.carVelocity = this.carSpeed;
         this.updateSpeedIndicator();
+    }
+
+    calculateMaxSteering() {
+        // Calculate dynamic max steering based on speed
+        const speedRatio = Math.abs(this.carSpeed) / this.MAX_SPEED;
+        return Phaser.Math.Linear(
+            this.BASE_MAX_STEERING,
+            this.MIN_MAX_STEERING,
+            speedRatio
+        );
     }
 
     updateSpeedIndicator() {
