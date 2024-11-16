@@ -14,11 +14,23 @@ class MainScene extends Phaser.Scene {
         this.CAR_ACCELERATION = 0.1; // Reduced from 5
         this.CAR_DECELERATION = 0.99; // Slightly slower deceleration
         this.MAX_SPEED = 9;
+        this.MIN_SPEED = -2;
 
-        this.STEERING_SPEED = 0.1;
-        this.MAX_STEERING = 0.15;
-        this.STEERING_RECOVERY = 0.95;
-        this.TURN_SPEED_REDUCTION = 0.85;
+        // New steering constants for gradual steering
+        this.STEERING_ACCELERATION = 0.005; // How quickly steering builds up
+        this.STEERING_DECELERATION = 0.60; // How quickly steering returns to center
+        this.MAX_STEERING = 0.2;
+        this.CURRENT_STEERING = 0; // Track current steering amount
+        this.STEERING_SPEED = 0; // Track steering velocity
+
+        this.AUTO_STRAIGHTEN_SPEED = 0.003;    // Speed of auto-straightening
+        this.STRAIGHTEN_DEADZONE = 0.005;      // Threshold to consider car straight
+        
+        this.TURN_SPEED_REDUCTION = 1.0;
+
+        // Vegetation spawning constants
+        this.SPAWN_DISTANCE = -200; // Distance above viewport to spawn
+        this.DESPAWN_DISTANCE = 800; // Distance below viewport to despawn
     }
 
     preload() {
@@ -93,7 +105,12 @@ class MainScene extends Phaser.Scene {
         }
 
         // Create vegetation groups
-        this.vegetation = this.add.group();
+        this.vegetation = this.add.group({
+            runChildUpdate: true
+        });
+
+        this.trees = [];
+        this.bushes = [];
         
         // Add vegetation on both sides
         this.createRoadSideVegetation();
@@ -159,9 +176,9 @@ class MainScene extends Phaser.Scene {
         const roadCenter = this.GAME_WIDTH / 2;
         const roadEdge = this.ROAD_WIDTH / 2;
         
-        // Reduced number of vegetation layers
-        this.createVegetationLayer(roadCenter - roadEdge - 150, -4, 4, 'left');
-        this.createVegetationLayer(roadCenter + roadEdge + 150, -4, 4, 'right');
+        // Create more initial vegetation to fill the scene
+        this.createVegetationLayer(roadCenter - roadEdge - 150, -8, 8, 'left');
+        this.createVegetationLayer(roadCenter + roadEdge + 150, -8, 8, 'right');
     }
 
     createVegetationLayer(baseX, startY, count, side) {
@@ -171,15 +188,17 @@ class MainScene extends Phaser.Scene {
         for (let i = startY; i < count; i++) {
             const xOffset = Phaser.Math.Between(-30, 30);
             const ySpacing = 250;
-            const y = i * ySpacing;
+            const y = i * ySpacing + this.SPAWN_DISTANCE;
 
-            // Add bushes first (they'll be behind trees)
+            // Add bushes
             if (Phaser.Math.Between(0, 10) > 6) {
                 const bushType = bushTypes[Phaser.Math.Between(0, bushTypes.length - 1)];
                 const bush = this.add.image(baseX + xOffset, y, bushType);
                 const scale = Phaser.Math.FloatBetween(0.4, 0.5);
                 bush.setScale(scale);
+                bush.initialX = baseX; // Store initial X for recycling
                 this.bushLayer.add(bush);
+                this.bushes.push(bush);
                 this.vegetation.add(bush);
             }
 
@@ -189,55 +208,118 @@ class MainScene extends Phaser.Scene {
                 const tree = this.add.image(baseX + xOffset, y, treeType);
                 const scale = Phaser.Math.FloatBetween(0.4, 0.5);
                 tree.setScale(scale);
+                tree.initialX = baseX; // Store initial X for recycling
                 
-                // Calculate the root position (bottom pixel of the tree)
-                const rootY = y + (tree.height * scale / 2);
-                tree.setDepth(rootY);
+                // Calculate the root position
+                tree.rootY = y + (tree.height * scale / 2);
+                this.updateTreeDepth(tree);
                 
                 this.treeLayer.add(tree);
+                this.trees.push(tree);
                 this.vegetation.add(tree);
-                
-                // Store the root Y position for recycling
-                tree.rootY = rootY;
             }
         }
+        
+        // Sort trees by Y position for proper depth
+        this.sortTrees();
     }
 
-    update() {
-        this.updateCarPhysics();
-        this.updateRoadElements();
+    updateTreeDepth(tree) {
+        // Set depth based on Y position
+        // Multiply by 100 to ensure enough depth resolution
+        tree.setDepth(tree.rootY * 100);
+    }
+
+    sortTrees() {
+        // Sort trees array by Y position
+        this.trees.sort((a, b) => a.rootY - b.rootY);
+        
+        // Update depths to ensure proper ordering
+        this.trees.forEach((tree, index) => {
+            tree.setDepth(index * 100);
+        });
     }
 
     updateCarPhysics() {
+        // Update speed with smoother acceleration/deceleration
         if (this.cursors.up.isDown) {
-            this.carSpeed = Math.min(this.carSpeed + this.CAR_ACCELERATION, this.MAX_SPEED);
+            this.carSpeed += this.CAR_ACCELERATION;
         } else if (this.cursors.down.isDown) {
-            this.carSpeed = Math.max(this.carSpeed - this.CAR_ACCELERATION, -this.MAX_SPEED / 2);
+            this.carSpeed -= this.CAR_ACCELERATION;
         } else {
+            // Apply deceleration only when no input
             this.carSpeed *= this.CAR_DECELERATION;
+            if (Math.abs(this.carSpeed) < 0.1) this.carSpeed = 0;
         }
 
+        // Clamp speed between MIN_SPEED and MAX_SPEED
+        this.carSpeed = Phaser.Math.Clamp(this.carSpeed, this.MIN_SPEED, this.MAX_SPEED);
+
+        // Handle steering input with auto-straigtening
         if (this.cursors.left.isDown) {
-            this.steeringAngle = Math.max(
-                this.steeringAngle - this.STEERING_SPEED,
-                -this.MAX_STEERING
-            );
+            this.STEERING_SPEED -= this.STEERING_ACCELERATION * Math.abs(this.carSpeed / this.MAX_SPEED);
         } else if (this.cursors.right.isDown) {
-            this.steeringAngle = Math.min(
-                this.steeringAngle + this.STEERING_SPEED,
-                this.MAX_STEERING
-            );
+            this.STEERING_SPEED += this.STEERING_ACCELERATION * Math.abs(this.carSpeed / this.MAX_SPEED);
         } else {
-            this.steeringAngle *= this.STEERING_RECOVERY;
-        }
+            // Auto-straightening when no steering input
+            if (Math.abs(this.carSpeed) > 0.1) { // Only auto-straighten when moving
+                // Determine direction to straighten
+                const straightenForce = -Math.sign(this.CURRENT_STEERING) * 
+                    this.AUTO_STRAIGHTEN_SPEED * 
+                    Math.abs(this.carSpeed / this.MAX_SPEED); // Scale with speed
+                
+                // Apply straightening force if not already straight
+                if (Math.abs(this.CURRENT_STEERING) > this.STRAIGHTEN_DEADZONE) {
+                    this.STEERING_SPEED += straightenForce;
+                } else {
+                    // If nearly straight, reset steering completely
+                    this.CURRENT_STEERING = 0;
+                    this.STEERING_SPEED = 0;
+                }
+            }
 
+             // Apply normal steering deceleration
+             this.STEERING_SPEED *= this.STEERING_DECELERATION;
+        }
+        
+        // Clamp steering speed
+        this.STEERING_SPEED = Phaser.Math.Clamp(
+            this.STEERING_SPEED,
+            -this.MAX_STEERING,
+            this.MAX_STEERING
+        );
+        
+        // Update current steering smoothly
+        this.CURRENT_STEERING += this.STEERING_SPEED;
+        this.CURRENT_STEERING = Phaser.Math.Clamp(
+            this.CURRENT_STEERING,
+            -this.MAX_STEERING,
+            this.MAX_STEERING
+        );
+
+        // Apply steering effects only when moving
         if (Math.abs(this.carSpeed) > 0.1) {
-            this.player.rotation = this.steeringAngle * (this.carSpeed / this.MAX_SPEED);
-            this.player.x += this.steeringAngle * this.carSpeed * 3;
+            // Update car rotation based on steering and speed
+            const targetRotation = this.CURRENT_STEERING * (this.carSpeed / this.MAX_SPEED);
+            
+            // Smoothly interpolate current rotation to target rotation
+            this.player.rotation = Phaser.Math.Linear(
+                this.player.rotation,
+                targetRotation,
+                0.1 // Adjust this value to change how quickly the car rotates
+            );
+
+            // Apply lateral movement based on speed and steering
+            const steeringForce = this.CURRENT_STEERING * Math.abs(this.carSpeed);
+            this.player.x += steeringForce * 2;
+            
+            // Apply gentler speed reduction when turning
+            if (Math.abs(this.CURRENT_STEERING) > this.MAX_STEERING / 2) {
+                this.carSpeed *= this.TURN_SPEED_REDUCTION;
+            }
         }
 
         this.carVelocity = this.carSpeed;
-
         this.updateSpeedIndicator();
     }
 
@@ -259,9 +341,11 @@ class MainScene extends Phaser.Scene {
         this.speedBar.setFillStyle(Phaser.Display.Color.GetColor(color.r, color.g, color.b));
         
     }
+    
     updateRoadElements() {
         this.roadScroll += this.carVelocity;
 
+        // Update lane markers
         this.laneMarkers.getChildren().forEach(marker => {
             marker.y += this.carVelocity;
             if (marker.y > this.GAME_HEIGHT) {
@@ -269,20 +353,29 @@ class MainScene extends Phaser.Scene {
             }
         });
 
+        // Update vegetation
         this.vegetation.getChildren().forEach(plant => {
             plant.y += this.carVelocity;
-            if (plant.y > this.GAME_HEIGHT + 100) {
-                plant.y = -100 + Phaser.Math.Between(-20, 20);
-                plant.x += Phaser.Math.Between(-10, 10);
+            
+            // Check if plant has moved beyond despawn point
+            if (plant.y > this.DESPAWN_DISTANCE) {
+                // Reset to spawn position with slight randomization
+                plant.y = this.SPAWN_DISTANCE + Phaser.Math.Between(-20, 20);
+                plant.x = plant.initialX + Phaser.Math.Between(-30, 30);
                 
-                // Update tree depth when recycling using root position
-                if (this.treeLayer.list.includes(plant)) {
-                    // Recalculate root Y position
-                    plant.rootY = plant.y + (plant.height * plant.scale * 0.5);
-                    plant.setDepth(plant.rootY);
+                // Update tree depth when recycling
+                if (this.trees.includes(plant)) {
+                    plant.rootY = plant.y + (plant.height * plant.scale / 2);
+                    this.updateTreeDepth(plant);
+                    this.sortTrees();
                 }
             }
         });
+    }
+
+    update() {
+        this.updateCarPhysics();
+        this.updateRoadElements();
     }
 }
 
