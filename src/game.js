@@ -69,7 +69,7 @@ class MainScene extends Phaser.Scene {
         this.DISTANCE = 0;
         this.DISTANCE_MULTIPLIER = 0.02;  // Score points per distance unit
         this.COIN_SCORE = 5;
-        this.COIN_SPAWN_DISTANCE = 20;
+        this.COIN_SPAWN_DISTANCE = 100;
         this.lastCoinSpawn = 0;
 
         // Coin animation constants
