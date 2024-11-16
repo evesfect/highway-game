@@ -75,7 +75,7 @@ class MainScene extends Phaser.Scene {
         // Coin animation constants
         this.COIN_TOTAL_FRAMES = 5;
         this.COIN_FRAME_RATE = 10; 
-        this.COIN_SCALE = 0.2;
+        this.COIN_SCALE = 0.3;
         
         // Track coins
         this.coins = [];
@@ -101,9 +101,17 @@ class MainScene extends Phaser.Scene {
         this.load.image('bush1', 'assets/bush1.png');
         this.load.image('bush2', 'assets/bush2.png');
 
+        this.load.on('filecomplete-spritesheet-coin', function (key, type, data) {
+            console.log('Coin spritesheet loaded:', { key, type, data });
+        });
+    
+        this.load.on('loaderror', function (file) {
+            console.error('Error loading file:', file.src);
+        });
+    
         this.load.spritesheet('coin', 'assets/coin.gif', { 
-            frameWidth: 180,  // Replace with your GIF frame width
-            frameHeight: 180 // Replace with your GIF frame height
+            frameWidth: 180,
+            frameHeight: 180
         });
     }
 
@@ -225,15 +233,24 @@ class MainScene extends Phaser.Scene {
         );
 
         // Add the animation configuration
-        this.anims.create({
-            key: 'coin-spin',
-            frames: this.anims.generateFrameNumbers('coin', { 
-                start: 0, 
-                end: this.COIN_TOTAL_FRAMES - 1 
-            }),
-            frameRate: this.COIN_FRAME_RATE,
-            repeat: -1 // -1 means loop forever
-        });
+        console.log('Creating coin animation...');
+        try {
+            const anim = this.anims.create({
+                key: 'coin-spin',
+                frames: this.anims.generateFrameNumbers('coin', { 
+                    start: 0, 
+                    end: 5
+                }),
+                frameRate: 10,
+                repeat: -1
+            });
+            console.log('Animation created successfully:', anim);
+            
+            // Log all available animations
+            console.log('Available animations:', this.anims.anims.entries);
+        } catch (error) {
+            console.error('Error creating animation:', error);
+        }
 
         // UI
         // Create score text
@@ -472,9 +489,24 @@ class MainScene extends Phaser.Scene {
         const laneIndex = Phaser.Math.Between(0, 2);
         const x = roadLeft + (laneWidth * 0.5) + (laneIndex * laneWidth);
         
-        // Create coin sprite
+        console.log('Spawning coin...');
         const coin = this.add.sprite(x, this.SPAWN_DISTANCE, 'coin');
-        coin.play('coin-spin'); // Start the animation
+        
+        // Log sprite details
+        console.log('Coin sprite created:', {
+            texture: coin.texture.key,
+            frame: coin.frame.name,
+            hasAnimation: coin.anims !== undefined,
+            textureExists: this.textures.exists('coin')
+        });
+        
+        try {
+            coin.anims.play('coin-spin');
+            console.log('Animation started successfully');
+        } catch (error) {
+            console.error('Error playing animation:', error);
+        }
+        
         coin.setScale(this.COIN_SCALE);
         
         // Add to physics system
