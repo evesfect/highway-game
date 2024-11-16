@@ -35,9 +35,9 @@ class MainScene extends Phaser.Scene {
         this.LANE_WIDTH = 150;  // Width of each lane
         this.DETECTION_DISTANCE = 200;  // Distance to check for cars ahead
         this.SAFE_DISTANCE = 120;  // Distance to maintain between cars
-        this.TRAFFIC_SPAWN_TIME = 2000;  // Spawn a new car every 2 seconds
+        this.TRAFFIC_SPAWN_TIME = 1000;  // Spawn a new car every 2 seconds
         this.MIN_TRAFFIC_SPEED = 3;
-        this.MAX_TRAFFIC_SPEED = 7;
+        this.MAX_TRAFFIC_SPEED = 8;
 
         // Vegetation spawning constants
         this.SPAWN_DISTANCE = -200; // Distance above viewport to spawn
@@ -146,7 +146,7 @@ class MainScene extends Phaser.Scene {
             this.GAME_HEIGHT - 100,
             'taxi'
         );
-        this.player.setScale(0.7);
+        this.player.setScale(1.0);
         this.player.setOrigin(0.5, 0.5);
         this.carLayer.add(this.player);
 
@@ -154,6 +154,15 @@ class MainScene extends Phaser.Scene {
         this.carVelocity = 0;
         this.steeringAngle = 0;
         this.carSpeed = 0;
+
+        // Collision
+        this.physics.add.collider(
+            this.player,
+            this.trafficCars,
+            this.handleCollision,
+            null,
+            this
+        );
 
         this.speedBarBg = this.add.rectangle(
             this.GAME_WIDTH - 50,
@@ -224,7 +233,7 @@ class MainScene extends Phaser.Scene {
                  (laneIndex * (this.ROAD_WIDTH / 3)); // Divide road into 3 lanes
 
         const car = this.add.sprite(x, this.SPAWN_DISTANCE, randomCar);
-        car.setScale(0.7);
+        car.setScale(1.0);
         this.physics.add.existing(car);
         this.trafficLayer.add(car);
 
@@ -232,6 +241,9 @@ class MainScene extends Phaser.Scene {
         car.speed = Phaser.Math.Between(this.MIN_TRAFFIC_SPEED, this.MAX_TRAFFIC_SPEED);
         car.lane = laneIndex;
         car.desiredSpeed = car.speed;
+
+        car.body.setSize(car.width * 0.8, car.height * 0.75); // Slightly smaller hitbox
+        this.physics.add.existing(car, false);
 
         this.trafficCars.push(car);
     }
@@ -277,6 +289,17 @@ class MainScene extends Phaser.Scene {
                 this.trafficCars.splice(i, 1);
             }
         }
+    }
+
+    handleCollision(player, trafficCar) {
+        // Stop the game physics
+        this.physics.pause();
+        
+        // Show browser alert
+        alert('Crash! Game Over!');
+        
+        // Reload the game
+        location.reload();
     }
 
     createRoadSideVegetation() {
@@ -425,8 +448,8 @@ class MainScene extends Phaser.Scene {
             this.player.x += steeringForce * 2;
 
             // Apply visual tilt through scale
-            const tiltScale = 0.7 + Math.abs(tiltAmount * 0.3);
-            this.player.setScale(0.7, tiltScale);
+            const tiltScale = 1.0 + Math.abs(tiltAmount * 0.3);
+            this.player.setScale(1.0, tiltScale);
             
             // Apply gentle speed reduction when turning
             if (Math.abs(this.CURRENT_STEERING) > this.MAX_STEERING / 2) {
