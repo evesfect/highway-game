@@ -34,15 +34,21 @@ class MainScene extends Phaser.Scene {
         // Traffic constants
         this.LANE_WIDTH = 150;  // Width of each lane
         this.DETECTION_DISTANCE = 200;  // Distance to check for cars ahead
-        this.SAFE_DISTANCE = 120;  // Distance to maintain between cars
+        this.BASE_SAFE_DISTANCE = 150;  // Distance to maintain between cars
+        this.SPEED_DISTANCE_FACTOR = 20;
         this.TRAFFIC_SPAWN_TIME = 1000;  // Spawn a new car every 2 seconds
         this.MIN_TRAFFIC_SPEED = 3;
         this.MAX_TRAFFIC_SPEED = 8;
+        this.MIN_TRAFFIC_LIMIT = 5;
+        this.MAX_TRAFFIC_LIMIT = 14;
+        this.TRAFFIC_LIMIT_CHANGE_TIME = 20000;
+        this.currentTrafficLimit = this.MAX_TRAFFIC_LIMIT;
 
         // Vegetation spawning constants
         this.SPAWN_DISTANCE = -200; // Distance above viewport to spawn
         this.DESPAWN_DISTANCE = 800; // Distance below viewport to despawn
 
+        this.lastSpawnLane = -1; // Track the last lane a car is spawned
         this.trafficCars = [];
     }
 
@@ -220,20 +226,49 @@ class MainScene extends Phaser.Scene {
             callbackScope: this,
             loop: true
         });
+
+        this.time.addEvent({
+            delay: this.TRAFFIC_LIMIT_CHANGE_TIME,
+            callback: this.updateTrafficLimit,
+            callbackScope: this,
+            loop: true
+        });
+    }
+
+    updateTrafficLimit() {
+        // Randomly set new limit between min and max
+        this.currentTrafficLimit = Phaser.Math.Between(
+            this.MIN_TRAFFIC_LIMIT,
+            this.MAX_TRAFFIC_LIMIT
+        );
+        console.log(`New traffic limit: ${this.currentTrafficLimit}`);
     }
 
     spawnTrafficCar() {
-        const laneIndex = Phaser.Math.Between(0, 2);  // Random lane (0, 1, or 2)
+        // Check if we're at or above the current limit
+        if (this.trafficCars.length >= this.currentTrafficLimit) {
+            return; // Don't spawn new cars if we're at the limit
+        }
+
+        let availableLanes = [0, 1, 2].filter(lane => lane !== this.lastSpawnLane);
+        const laneIndex = availableLanes[Phaser.Math.Between(0, availableLanes.length - 1)];
+        this.lastSpawnLane = laneIndex;  // Remember this lane for next spawn
+        
         const carAssets = ['car1', 'car2', 'car3', 'car4'];
         const randomCar = carAssets[Phaser.Math.Between(0, carAssets.length - 1)];
         
         // Calculate lane position
-        const x = (this.GAME_WIDTH - this.ROAD_WIDTH) / 2 + 
-                 (this.LANE_WIDTH / 2) + // Center in lane
-                 (laneIndex * (this.ROAD_WIDTH / 3)); // Divide road into 3 lanes
+        const laneOffset = this.ROAD_WIDTH / 3;  // Width of each lane
+        const roadLeft = (this.GAME_WIDTH - this.ROAD_WIDTH) / 2;
+        const baseX = roadLeft + (laneOffset * 0.5) + (laneIndex * laneOffset);
+        
+        // Add random offset (adjust the ±15 to taste)
+        const randomOffset = Phaser.Math.Between(-15, 15);
+        const x = baseX + randomOffset;
 
         const car = this.add.sprite(x, this.SPAWN_DISTANCE, randomCar);
         car.setScale(1.0);
+        car.setOrigin(0.5, 0.5);
         this.physics.add.existing(car);
         this.trafficLayer.add(car);
 
@@ -241,6 +276,9 @@ class MainScene extends Phaser.Scene {
         car.speed = Phaser.Math.Between(this.MIN_TRAFFIC_SPEED, this.MAX_TRAFFIC_SPEED);
         car.lane = laneIndex;
         car.desiredSpeed = car.speed;
+        car.acceleration = 0.1;
+        car.lastSpeedChange = 0;
+        car.speedChangeInterval = Phaser.Math.Between(8000, 12000);
 
         car.body.setSize(car.width * 0.8, car.height * 0.75); // Slightly smaller hitbox
         this.physics.add.existing(car, false);
@@ -249,40 +287,82 @@ class MainScene extends Phaser.Scene {
     }
 
     updateTraffic() {
-        // Update each traffic car
+        const currentTime = this.time.now;
+    
         for (let i = this.trafficCars.length - 1; i >= 0; i--) {
             const car = this.trafficCars[i];
             
-            // Check for cars ahead in the same lane
-            const carsAhead = this.trafficCars.filter(otherCar => 
-                otherCar !== car &&
-                otherCar.lane === car.lane &&
-                otherCar.y < car.y &&
-                car.y - otherCar.y < this.DETECTION_DISTANCE
-            );
+            // Calculate dynamic safe distance based on speed
+            const safeDist = this.BASE_SAFE_DISTANCE + (car.speed * this.SPEED_DISTANCE_FACTOR);
 
-            // Adjust speed based on cars ahead
-            if (carsAhead.length > 0) {
-                const nearestCar = carsAhead.reduce((nearest, current) => 
-                    current.y > nearest.y ? current : nearest
-                );
+            // Update speed cycle
+            if (currentTime - car.lastSpeedChange > car.speedChangeInterval) {
+                // Only change speed if not currently following another car
+                if (!car.isFollowing) {
+                    car.desiredSpeed = Phaser.Math.Between(this.MIN_TRAFFIC_SPEED, this.MAX_TRAFFIC_SPEED);
+                    car.speedChangeInterval = Phaser.Math.Between(8000, 12000);  // Set new random interval
+                }
+                car.lastSpeedChange = currentTime;
+            }
+    
+            // Check for cars ahead
+            const carsAhead = this.trafficCars.filter(otherCar => {
+                if (otherCar === car) return false;
+                if (otherCar.y >= car.y) return false;
+                if (car.y - otherCar.y > this.DETECTION_DISTANCE) return false;
+                
+                const xDistance = Math.abs(otherCar.x - car.x);
+                return xDistance < 50;
+            });
+            
+            // Check if taxi is ahead
+            const playerAhead = 
+            this.player.y < car.y && 
+            car.y - this.player.y < this.DETECTION_DISTANCE &&
+            Math.abs(this.player.x - car.x) < 50;
 
-                const distance = nearestCar.y - car.y;
-                if (distance < this.SAFE_DISTANCE) {
-                    // Slow down to match or go slightly slower than car ahead
-                    car.speed = Math.min(car.speed, nearestCar.speed * 0.9);
+            if (playerAhead || carsAhead.length > 0) {
+                car.isFollowing = true;
+                let targetVehicle;
+    
+                if (playerAhead) {
+                    // If player is ahead, use player's data
+                    targetVehicle = {
+                        y: this.player.y,
+                        speed: Math.max(0, this.carSpeed) // Only consider forward speed
+                    };
                 } else {
-                    // Gradually return to desired speed
-                    car.speed = Phaser.Math.Linear(car.speed, car.desiredSpeed, 0.1);
+                    // Use nearest traffic car
+                    targetVehicle = carsAhead.reduce((nearest, current) => 
+                        current.y > nearest.y ? current : nearest
+                    );
+                }
+    
+                const distance = car.y - targetVehicle.y;
+                const targetSpeed = distance < safeDist
+                    ? targetVehicle.speed * 0.9  // Slightly slower than vehicle ahead
+                    : car.desiredSpeed;
+    
+                // Gradually adjust speed with more aggressive braking when too close
+                if (car.speed > targetSpeed) {
+                    const brakingFactor = distance < safeDist * 0.5 ? 2.0 : 1.0;
+                    car.speed = Math.max(targetSpeed, car.speed - (car.acceleration * brakingFactor));
+                } else if (car.speed < targetSpeed) {
+                    car.speed = Math.min(targetSpeed, car.speed + car.acceleration);
                 }
             } else {
-                // No cars ahead, return to desired speed
-                car.speed = Phaser.Math.Linear(car.speed, car.desiredSpeed, 0.1);
+                car.isFollowing = false;
+                // Gradually return to desired speed
+                if (car.speed < car.desiredSpeed) {
+                    car.speed = Math.min(car.desiredSpeed, car.speed + car.acceleration);
+                } else if (car.speed > car.desiredSpeed) {
+                    car.speed = Math.max(car.desiredSpeed, car.speed - car.acceleration);
+                }
             }
-
+    
             // Move car relative to player speed
             car.y += -(car.speed - this.carVelocity);
-
+    
             // Remove car if it's off screen
             if (car.y > this.DESPAWN_DISTANCE) {
                 car.destroy();
