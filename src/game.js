@@ -11,8 +11,8 @@ class MainScene extends Phaser.Scene {
         this.LANE_COLOR = 0xf1c40f;
 
         // Car physics constants
-        this.CAR_ACCELERATION = 0.1; // Reduced from 5
-        this.CAR_DECELERATION = 0.99; // Slightly slower deceleration
+        this.CAR_ACCELERATION = 0.1;
+        this.CAR_DECELERATION = 0.99;
         this.MAX_SPEED = 9;
         this.MIN_SPEED = -2;
 
@@ -24,19 +24,37 @@ class MainScene extends Phaser.Scene {
         this.CURRENT_STEERING = 0; // Track current steering amount
         this.STEERING_SPEED = 0; // Track steering velocity
 
+        this.MAX_TILT = 0.3;
+
         this.AUTO_STRAIGHTEN_SPEED = 0.003;    // Speed of auto-straightening
         this.STRAIGHTEN_DEADZONE = 0.005;      // Threshold to consider car straight
         
         this.TURN_SPEED_REDUCTION = 1.0;
 
+        // Traffic constants
+        this.LANE_WIDTH = 150;  // Width of each lane
+        this.DETECTION_DISTANCE = 200;  // Distance to check for cars ahead
+        this.SAFE_DISTANCE = 120;  // Distance to maintain between cars
+        this.TRAFFIC_SPAWN_TIME = 2000;  // Spawn a new car every 2 seconds
+        this.MIN_TRAFFIC_SPEED = 3;
+        this.MAX_TRAFFIC_SPEED = 7;
+
         // Vegetation spawning constants
         this.SPAWN_DISTANCE = -200; // Distance above viewport to spawn
         this.DESPAWN_DISTANCE = 800; // Distance below viewport to despawn
+
+        this.trafficCars = [];
     }
 
     preload() {
         this.load.image('taxi', 'assets/taxi.png');
         this.load.image('steering-wheel', 'assets/steering-wheel.png');
+
+        // Load traffic car assets
+        this.load.image('car1', 'assets/car1.png');
+        this.load.image('car2', 'assets/car2.png');
+        this.load.image('car3', 'assets/car3.png');
+        this.load.image('car4', 'assets/car4.png');
         
         // Load tree variants
         this.load.image('tree1', 'assets/tree1.png');
@@ -54,6 +72,7 @@ class MainScene extends Phaser.Scene {
         this.backgroundLayer = this.add.layer();
         this.roadLayer = this.add.layer();
         this.bushLayer = this.add.layer();
+        this.trafficLayer = this.add.layer();
         this.carLayer = this.add.layer();
         this.treeLayer = this.add.layer();
         this.UILayer = this.add.layer();
@@ -62,9 +81,10 @@ class MainScene extends Phaser.Scene {
         this.backgroundLayer.setDepth(0);
         this.roadLayer.setDepth(1);
         this.bushLayer.setDepth(2);
-        this.carLayer.setDepth(3);
-        this.treeLayer.setDepth(4);
-        this.UILayer.setDepth(5);
+        this.trafficLayer.setDepth(3);
+        this.carLayer.setDepth(4);
+        this.treeLayer.setDepth(5);
+        this.UILayer.setDepth(6);
 
         // Create the background (grass)
         this.backgroundLayer.add(
@@ -87,24 +107,27 @@ class MainScene extends Phaser.Scene {
         );
         this.roadLayer.add(road);
 
-        // Create lane markers
+        // Create lane markers for 3 lanes
         this.laneMarkers = this.add.group();
         const markerCount = 10;
         const markerHeight = 40;
-        const markerWidth = 8;
+        const markerWidth = 6;
         const gap = 60;
 
-        for (let i = 0; i < markerCount; i++) {
-            const marker = this.add.rectangle(
-                this.GAME_WIDTH / 2,
-                -markerHeight + (i * (markerHeight + gap)),
-                markerWidth,
-                markerHeight,
-                this.LANE_COLOR
-            );
-            this.roadLayer.add(marker);
-            this.laneMarkers.add(marker);
-        }
+        // Create two sets of lane markers
+        [-1, 1].forEach(offset => {
+            for (let i = 0; i < markerCount; i++) {
+                const marker = this.add.rectangle(
+                    this.GAME_WIDTH / 2 + (offset * this.LANE_WIDTH / 3),
+                    -markerHeight + (i * (markerHeight + gap)),
+                    markerWidth,
+                    markerHeight,
+                    this.LANE_COLOR
+                );
+                this.roadLayer.add(marker);
+                this.laneMarkers.add(marker);
+            }
+        });
 
         // Create vegetation groups
         this.vegetation = this.add.group({
@@ -181,6 +204,79 @@ class MainScene extends Phaser.Scene {
         this.cursors = this.input.keyboard.createCursorKeys();
         this.markerSpeed = 3;
         this.roadScroll = 0;
+
+        this.time.addEvent({
+            delay: this.TRAFFIC_SPAWN_TIME,
+            callback: this.spawnTrafficCar,
+            callbackScope: this,
+            loop: true
+        });
+    }
+
+    spawnTrafficCar() {
+        const laneIndex = Phaser.Math.Between(0, 2);  // Random lane (0, 1, or 2)
+        const carAssets = ['car1', 'car2', 'car3', 'car4'];
+        const randomCar = carAssets[Phaser.Math.Between(0, carAssets.length - 1)];
+        
+        // Calculate lane position
+        const x = (this.GAME_WIDTH - this.ROAD_WIDTH) / 2 + 
+                 (this.LANE_WIDTH / 2) + // Center in lane
+                 (laneIndex * (this.ROAD_WIDTH / 3)); // Divide road into 3 lanes
+
+        const car = this.add.sprite(x, this.SPAWN_DISTANCE, randomCar);
+        car.setScale(0.7);
+        this.physics.add.existing(car);
+        this.trafficLayer.add(car);
+
+        // Car properties
+        car.speed = Phaser.Math.Between(this.MIN_TRAFFIC_SPEED, this.MAX_TRAFFIC_SPEED);
+        car.lane = laneIndex;
+        car.desiredSpeed = car.speed;
+
+        this.trafficCars.push(car);
+    }
+
+    updateTraffic() {
+        // Update each traffic car
+        for (let i = this.trafficCars.length - 1; i >= 0; i--) {
+            const car = this.trafficCars[i];
+            
+            // Check for cars ahead in the same lane
+            const carsAhead = this.trafficCars.filter(otherCar => 
+                otherCar !== car &&
+                otherCar.lane === car.lane &&
+                otherCar.y < car.y &&
+                car.y - otherCar.y < this.DETECTION_DISTANCE
+            );
+
+            // Adjust speed based on cars ahead
+            if (carsAhead.length > 0) {
+                const nearestCar = carsAhead.reduce((nearest, current) => 
+                    current.y > nearest.y ? current : nearest
+                );
+
+                const distance = nearestCar.y - car.y;
+                if (distance < this.SAFE_DISTANCE) {
+                    // Slow down to match or go slightly slower than car ahead
+                    car.speed = Math.min(car.speed, nearestCar.speed * 0.9);
+                } else {
+                    // Gradually return to desired speed
+                    car.speed = Phaser.Math.Linear(car.speed, car.desiredSpeed, 0.1);
+                }
+            } else {
+                // No cars ahead, return to desired speed
+                car.speed = Phaser.Math.Linear(car.speed, car.desiredSpeed, 0.1);
+            }
+
+            // Move car relative to player speed
+            car.y += -(car.speed - this.carVelocity);
+
+            // Remove car if it's off screen
+            if (car.y > this.DESPAWN_DISTANCE) {
+                car.destroy();
+                this.trafficCars.splice(i, 1);
+            }
+        }
     }
 
     createRoadSideVegetation() {
@@ -202,7 +298,7 @@ class MainScene extends Phaser.Scene {
             const y = i * ySpacing + this.SPAWN_DISTANCE;
 
             // Add bushes
-            if (Phaser.Math.Between(0, 10) > 6) {
+            if (Phaser.Math.Between(0, 10) > 3) {
                 const bushType = bushTypes[Phaser.Math.Between(0, bushTypes.length - 1)];
                 const bush = this.add.image(baseX + xOffset, y, bushType);
                 const scale = Phaser.Math.FloatBetween(0.4, 0.5);
@@ -315,19 +411,24 @@ class MainScene extends Phaser.Scene {
         if (Math.abs(this.carSpeed) > 0.1) {
             // Update car rotation based on steering and speed
             const targetRotation = this.CURRENT_STEERING * (this.carSpeed / this.MAX_SPEED);
-            
-            // Smoothly interpolate current rotation to target rotation
+            const tiltAmount = this.CURRENT_STEERING * this.MAX_TILT;
+
+            // Combine rotation and tilt
             this.player.rotation = Phaser.Math.Linear(
                 this.player.rotation,
                 targetRotation,
-                0.1 // Adjust this value to change how quickly the car rotates
+                0.2
             );
 
             // Apply lateral movement based on speed and steering
             const steeringForce = this.CURRENT_STEERING * Math.abs(this.carSpeed);
             this.player.x += steeringForce * 2;
+
+            // Apply visual tilt through scale
+            const tiltScale = 0.7 + Math.abs(tiltAmount * 0.3);
+            this.player.setScale(0.7, tiltScale);
             
-            // Apply gentler speed reduction when turning
+            // Apply gentle speed reduction when turning
             if (Math.abs(this.CURRENT_STEERING) > this.MAX_STEERING / 2) {
                 this.carSpeed *= this.TURN_SPEED_REDUCTION;
             }
@@ -403,6 +504,7 @@ class MainScene extends Phaser.Scene {
     update() {
         this.updateCarPhysics();
         this.updateRoadElements();
+        this.updateTraffic();
     }
 }
 
