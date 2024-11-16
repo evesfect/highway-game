@@ -31,6 +31,9 @@ class MainScene extends Phaser.Scene {
         
         this.TURN_SPEED_REDUCTION = 1.0;
 
+        this.BASE_PLAYER_Y = this.GAME_HEIGHT - 100;  // Original Y position
+        this.MAX_FORWARD_OFFSET = 30;  // Maximum forward movement
+
         // Traffic constants
         this.LANE_WIDTH = 150;  // Width of each lane
         this.DETECTION_DISTANCE = 200;  // Distance to check for cars ahead
@@ -43,6 +46,14 @@ class MainScene extends Phaser.Scene {
         this.MAX_TRAFFIC_LIMIT = 14;
         this.TRAFFIC_LIMIT_CHANGE_TIME = 20000;
         this.currentTrafficLimit = this.MAX_TRAFFIC_LIMIT;
+        this.REACTION_DELAY = 400
+
+        this.CAR_DIMENSIONS = {
+            'car1': { length: 1.0, width: 1.0 },
+            'car2': { length: 1.12, width: 1.0 },
+            'car3': { length: 1.0, width: 1.0 },
+            'car4': { length: 1.0, width: 1.0 }
+        };
 
         // Vegetation spawning constants
         this.SPAWN_DISTANCE = -200; // Distance above viewport to spawn
@@ -542,6 +553,13 @@ class MainScene extends Phaser.Scene {
 
         this.carVelocity = this.carSpeed;
         this.updateSpeedIndicator();
+
+        // Calculate forward offset based on speed
+        const speedRatio = Math.abs(this.carSpeed) / this.MAX_SPEED;
+        const forwardOffset = speedRatio * this.MAX_FORWARD_OFFSET;
+        
+        // Update player Y position
+        this.player.y = this.BASE_PLAYER_Y - forwardOffset;
     }
 
     calculateMaxSteering() {
@@ -579,7 +597,7 @@ class MainScene extends Phaser.Scene {
         // Update lane markers
         this.laneMarkers.getChildren().forEach(marker => {
             marker.y += this.carVelocity;
-            if (marker.y > this.GAME_HEIGHT) {
+            if (marker.y > this.GAME_HEIGHT + marker.height) {
                 marker.y = -marker.height;
             }
         });
