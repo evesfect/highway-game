@@ -44,14 +44,14 @@ class MainScene extends Phaser.Scene {
         this.MAX_TRAFFIC_SPEED = 8;
         this.MIN_TRAFFIC_LIMIT = 5;
         this.MAX_TRAFFIC_LIMIT = 14;
-        this.TRAFFIC_LIMIT_CHANGE_TIME = 20000;
+        this.TRAFFIC_LIMIT_CHANGE_TIME = 15000;
         this.currentTrafficLimit = this.MAX_TRAFFIC_LIMIT;
-        this.REACTION_DELAY = 400
+        this.REACTION_DELAY = 700
 
         this.CAR_DIMENSIONS = {
             'car1': { length: 1.0, width: 1.0 },
             'car2': { length: 1.12, width: 1.0 },
-            'car3': { length: 1.0, width: 1.0 },
+            'car3': { length: 1.0, width: 0.95 },
             'car4': { length: 1.0, width: 1.0 }
         };
 
@@ -61,6 +61,24 @@ class MainScene extends Phaser.Scene {
 
         this.lastSpawnLane = -1; // Track the last lane a car is spawned
         this.trafficCars = [];
+
+        this.PIXELS_PER_METER = 45;
+        
+        // Scoring constants
+        this.SCORE = 0;
+        this.DISTANCE = 0;
+        this.DISTANCE_MULTIPLIER = 0.02;  // Score points per distance unit
+        this.COIN_SCORE = 5;
+        this.COIN_SPAWN_DISTANCE = 20;
+        this.lastCoinSpawn = 0;
+
+        // Coin animation constants
+        this.COIN_TOTAL_FRAMES = 5;
+        this.COIN_FRAME_RATE = 10; 
+        this.COIN_SCALE = 0.2;
+        
+        // Track coins
+        this.coins = [];
     }
 
     preload() {
@@ -82,13 +100,37 @@ class MainScene extends Phaser.Scene {
         // Load bush variants
         this.load.image('bush1', 'assets/bush1.png');
         this.load.image('bush2', 'assets/bush2.png');
+
+        this.load.spritesheet('coin', 'assets/coin.gif', { 
+            frameWidth: 180,  // Replace with your GIF frame width
+            frameHeight: 180 // Replace with your GIF frame height
+        });
     }
 
     create() {
+        // Font Preload
+        WebFont.load({
+            custom: {
+                families: ['Karmatic Arcade']
+            },
+            active: () => {
+                // Create your text elements here
+                const textConfig = {
+                    fontFamily: 'Karmatic Arcade',
+                    fontSize: '24px',
+                    fill: '#ffffff',
+                    stroke: '#000000',
+                    strokeThickness: 4
+                };
+                
+            }
+        });
+
         // Create depth layers
         this.backgroundLayer = this.add.layer();
         this.roadLayer = this.add.layer();
         this.bushLayer = this.add.layer();
+        this.coinLayer = this.add.layer();
         this.trafficLayer = this.add.layer();
         this.carLayer = this.add.layer();
         this.treeLayer = this.add.layer();
@@ -98,6 +140,7 @@ class MainScene extends Phaser.Scene {
         this.backgroundLayer.setDepth(0);
         this.roadLayer.setDepth(1);
         this.bushLayer.setDepth(2);
+        this.coinLayer.setDepth(2.5);
         this.trafficLayer.setDepth(3);
         this.carLayer.setDepth(4);
         this.treeLayer.setDepth(5);
@@ -181,6 +224,33 @@ class MainScene extends Phaser.Scene {
             this
         );
 
+        // Add the animation configuration
+        this.anims.create({
+            key: 'coin-spin',
+            frames: this.anims.generateFrameNumbers('coin', { 
+                start: 0, 
+                end: this.COIN_TOTAL_FRAMES - 1 
+            }),
+            frameRate: this.COIN_FRAME_RATE,
+            repeat: -1 // -1 means loop forever
+        });
+
+        // UI
+        // Create score text
+        const textConfig = {
+            fontFamily: 'Karmatic Arcade',
+            fontSize: '24px',
+            fill: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 4
+        };
+        
+        this.scoreText = this.add.text(20, 20, 'Score: 0', textConfig);
+        this.distanceText = this.add.text(20, 50, 'Distance: 0m', textConfig);
+        this.UILayer.add(this.scoreText);
+        this.UILayer.add(this.distanceText);
+
+        // Add speedbar 
         this.speedBarBg = this.add.rectangle(
             this.GAME_WIDTH - 50,
             30,
@@ -393,6 +463,53 @@ class MainScene extends Phaser.Scene {
         location.reload();
     }
 
+    spawnCoin() {
+        // Calculate lane positions
+        const laneWidth = this.ROAD_WIDTH / 3;
+        const roadLeft = (this.GAME_WIDTH - this.ROAD_WIDTH) / 2;
+        
+        // Choose random lane
+        const laneIndex = Phaser.Math.Between(0, 2);
+        const x = roadLeft + (laneWidth * 0.5) + (laneIndex * laneWidth);
+        
+        // Create coin sprite
+        const coin = this.add.sprite(x, this.SPAWN_DISTANCE, 'coin');
+        coin.play('coin-spin'); // Start the animation
+        coin.setScale(this.COIN_SCALE);
+        
+        // Add to physics system
+        this.physics.add.existing(coin);
+        coin.body.setSize(coin.width * 0.8, coin.height * 0.8);  // Smaller hitbox
+        
+        this.coinLayer.add(coin);
+        this.coins.push(coin);
+        
+        // Add overlap detection with player
+        this.physics.add.overlap(this.player, coin, this.collectCoin, null, this);
+    }
+
+    collectCoin(player, coin) {
+        // Remove coin
+        const index = this.coins.indexOf(coin);
+        if (index > -1) {
+            this.coins.splice(index, 1);
+        }
+        coin.destroy();
+        
+        // Add score
+        this.SCORE += this.COIN_SCORE;
+        this.updateScoreText();
+        
+        // Optional: Add collection effect
+        this.tweens.add({
+            targets: coin,
+            alpha: 0,
+            scale: 1.5,
+            duration: 200,
+            onComplete: () => coin.destroy()
+        });
+    }
+
     createRoadSideVegetation() {
         const roadCenter = this.GAME_WIDTH / 2;
         const roadEdge = this.ROAD_WIDTH / 2;
@@ -572,6 +689,16 @@ class MainScene extends Phaser.Scene {
         );
     }
 
+    updateScoreText() {
+        // Clear existing text by setting it
+        this.scoreText.setText(`Score: ${Math.floor(this.SCORE)}`);
+        this.distanceText.setText(`Distance: ${Math.floor(this.DISTANCE)}m`);
+        
+        // Force a refresh of the text objects
+        this.scoreText.dirty = true;
+        this.distanceText.dirty = true;
+    }
+
     updateSpeedIndicator() {
         // Calculate speed percentage
         const speedPercent = Math.abs(this.carSpeed) / this.MAX_SPEED;
@@ -626,6 +753,33 @@ class MainScene extends Phaser.Scene {
         this.updateCarPhysics();
         this.updateRoadElements();
         this.updateTraffic();
+
+        // Update distance and score
+        if (this.carSpeed > 0) {
+            const distanceDelta = this.carSpeed / this.PIXELS_PER_METER;  // Convert to meters
+            this.DISTANCE += distanceDelta;
+            this.SCORE += distanceDelta * this.DISTANCE_MULTIPLIER;  // 1 point per 50 meters
+        }
+        
+        // Check if it's time to spawn a new coin
+        if (this.DISTANCE - this.lastCoinSpawn >= this.COIN_SPAWN_DISTANCE) {
+            this.spawnCoin();
+            this.lastCoinSpawn = this.DISTANCE;
+        }
+        
+        // Update coins
+        for (let i = this.coins.length - 1; i >= 0; i--) {
+            const coin = this.coins[i];
+            coin.y += this.carVelocity;
+            
+            // Remove coins that are off screen
+            if (coin.y > this.DESPAWN_DISTANCE) {
+                this.coins.splice(i, 1);
+                coin.destroy();
+            }
+        }
+        
+        this.updateScoreText();
     }
 }
 
