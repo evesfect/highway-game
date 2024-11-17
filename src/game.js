@@ -3,9 +3,9 @@ import 'phaser';
 class MainScene extends Phaser.Scene {
     constructor() {
         super({ key: 'MainScene' });
-        this.GAME_WIDTH = 800;
-        this.GAME_HEIGHT = 600;
-        this.ROAD_WIDTH = 300;
+        this.GAME_WIDTH = window.innerWidth;
+        this.GAME_HEIGHT = window.innerHeight;
+        this.ROAD_WIDTH = Math.min(this.GAME_WIDTH * 0.8, 300);
         this.GRASS_COLOR = 0x2ecc71;
         this.ROAD_COLOR = 0x34495e;
         this.LANE_COLOR = 0xf1c40f;
@@ -42,8 +42,8 @@ class MainScene extends Phaser.Scene {
         this.TRAFFIC_SPAWN_TIME = 1000;  // Spawn a new car every 2 seconds
         this.MIN_TRAFFIC_SPEED = 3;
         this.MAX_TRAFFIC_SPEED = 8;
-        this.MIN_TRAFFIC_LIMIT = 5;
-        this.MAX_TRAFFIC_LIMIT = 14;
+        this.MIN_TRAFFIC_LIMIT = 10;
+        this.MAX_TRAFFIC_LIMIT = 19;
         this.TRAFFIC_LIMIT_CHANGE_TIME = 15000;
         this.currentTrafficLimit = this.MAX_TRAFFIC_LIMIT;
         this.REACTION_DELAY = 700
@@ -331,6 +331,8 @@ class MainScene extends Phaser.Scene {
             callbackScope: this,
             loop: true
         });
+
+        this.addTouchControls();
     }
 
     updateTrafficLimit() {
@@ -340,6 +342,57 @@ class MainScene extends Phaser.Scene {
             this.MAX_TRAFFIC_LIMIT
         );
         console.log(`New traffic limit: ${this.currentTrafficLimit}`);
+    }
+
+    addTouchControls() {
+        // Create invisible touch zones
+        const touchZoneHeight = this.GAME_HEIGHT * 0.5;
+        
+        // Left side of screen for steering
+        this.steeringZone = this.add.rectangle(
+            0, 
+            this.GAME_HEIGHT - touchZoneHeight,
+            this.GAME_WIDTH * 0.5,
+            touchZoneHeight,
+            0x000000,
+            0
+        );
+        this.steeringZone.setOrigin(0, 0);
+        this.steeringZone.setInteractive();
+
+        // Right side of screen for acceleration
+        this.accelerationZone = this.add.rectangle(
+            this.GAME_WIDTH * 0.5,
+            this.GAME_HEIGHT - touchZoneHeight,
+            this.GAME_WIDTH * 0.5,
+            touchZoneHeight,
+            0x000000,
+            0
+        );
+        this.accelerationZone.setOrigin(0, 0);
+        this.accelerationZone.setInteractive();
+
+        // Track touch positions
+        this.input.on('pointermove', (pointer) => {
+            if (pointer.isDown) {
+                if (pointer.x < this.GAME_WIDTH * 0.5) {
+                    // Steering control
+                    const centerY = this.GAME_HEIGHT - touchZoneHeight/2;
+                    const steeringAmount = (pointer.x - (this.GAME_WIDTH * 0.25)) / (this.GAME_WIDTH * 0.25);
+                    this.STEERING_SPEED = steeringAmount * this.STEERING_ACCELERATION;
+                } else {
+                    // Acceleration control
+                    const accelerationAmount = 1 - (pointer.y / this.GAME_HEIGHT);
+                    this.carSpeed = accelerationAmount * this.MAX_SPEED;
+                }
+            }
+        });
+
+        // Reset controls when touch ends
+        this.input.on('pointerup', () => {
+            this.STEERING_SPEED = 0;
+            this.carSpeed *= this.CAR_DECELERATION;
+        });
     }
 
     spawnTrafficCar() {
@@ -612,7 +665,7 @@ class MainScene extends Phaser.Scene {
 
     updateCarPhysics() {
         // Update speed with smoother acceleration/deceleration
-        if (this.cursors.up.isDown) {
+        if (this.cursors.up.isDown || this.input.activePointer.isDown) {
             this.carSpeed += this.CAR_ACCELERATION;
         } else if (this.cursors.down.isDown) {
             this.carSpeed -= this.CAR_ACCELERATION;
@@ -817,8 +870,13 @@ class MainScene extends Phaser.Scene {
 
 const config = {
     type: Phaser.AUTO,
-    width: 800,
-    height: 600,
+    scale: {
+        mode: Phaser.Scale.RESIZE,
+        parent: 'game',
+        width: '100%',
+        height: '100%',
+        autoCenter: Phaser.Scale.CENTER_BOTH
+    },
     physics: {
         default: 'arcade',
         arcade: {
